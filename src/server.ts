@@ -1,7 +1,9 @@
 import cors from 'cors';
 import express, { Router } from 'express';
 import { getAuthLogs, logAuth } from './services/firebase';
-import { AuthLog } from './types/Authlogs';
+import { AuthLog } from './types/AuthLogs';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3001;

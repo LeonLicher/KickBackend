@@ -1,6 +1,6 @@
 import { addDoc, collection, getDocs, limit, orderBy, query, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { AuthLog } from '../types/Authlogs';
+import { AuthLog } from '../types/AuthLogs';
 
 function validateAuthLog(data: any): { isValid: boolean; error?: string } {
   // Check required fields
