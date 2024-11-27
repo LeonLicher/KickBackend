@@ -10,7 +10,7 @@ const port = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:5173', 'https://leonlicher.github.io/Kickbase/'],
+  origin: ['http://localhost:5173', 'https://leonlicher.github.io'],
   credentials: true
 }));
 app.use(express.json());
