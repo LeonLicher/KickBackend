@@ -59,7 +59,7 @@ export async function getAuthLogs(): Promise<AuthLog[]> {
   const q = query(
     collection(db, 'authLogs'),
     orderBy('timestamp', 'desc'),
-    limit(50)
+    limit(100)
   );
 
   const querySnapshot = await getDocs(q);
