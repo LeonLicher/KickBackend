@@ -2,7 +2,9 @@ import cors from 'cors';
 import express, { Router } from 'express';
 import { getAuthLogs, logAuth } from './services/firebase';
 import { AuthLog } from './types/AuthLogs';
+import { categorizePlayer } from './model/categorizePlayers';
 import dotenv from 'dotenv';
+import { DetailedPlayer, DetailedPlayersResponse } from './types/DetailedPlayers';
 dotenv.config();
 
 const app = express();
@@ -45,6 +47,54 @@ apiRouter.get('/logs', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch auth logs' });
   }
 });
+
+apiRouter.post('/analysis/team', async (req, res) => {
+  console.log('Received request to analyze team');
+  try {
+    const players = req.body.players;
+    
+    // Read the detailed players data
+    const detailedPlayersRaw = await import('./public/detailed_players.json');
+    const response = detailedPlayersRaw.default as unknown as DetailedPlayersResponse;
+    const detailedPlayers = Object.values(response.players);
+
+    const analyzedPlayers = players.map((player: any) => {
+      // Convert the incoming player data to match DetailedPlayer interface
+      const detailedPlayer: Partial<DetailedPlayer> = {
+        i: player.id,
+        tp: player.totalPoints || 0,
+        ap: player.averagePoints || 0,
+        st: player.status,
+        pos: player.position
+      };
+
+      const score = categorizePlayer(detailedPlayer, detailedPlayers);
+
+      let recommendation = '';
+      if (score > 70) {
+        recommendation = 'Keep - Strong performer';
+      } else if (score > 40) {
+        recommendation = 'Monitor - Average performer';
+      } else {
+        recommendation = 'Consider replacing - Underperforming';
+      }
+
+      return {
+        id: player.id,
+        analysis: {
+          score: score,
+          recommendation
+        }
+      };
+    });
+
+    res.json({ players: analyzedPlayers });
+  } catch (error) {
+    console.error('Error analyzing team:', error);
+    res.status(500).json({ error: 'Failed to analyze team' });
+  }
+});
+
 
 // Add router to app
 app.use('/auth', apiRouter);
