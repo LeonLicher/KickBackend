@@ -1,10 +1,10 @@
 import cors from 'cors';
+import dotenv from 'dotenv';
 import express, { Router } from 'express';
+import { categorizePlayer, findAlternativePlayers, updatePlayersWithGroups } from './model/categorizePlayers';
 import { getAuthLogs, logAuth } from './services/firebase';
 import { AuthLog } from './types/AuthLogs';
-import { categorizePlayer } from './model/categorizePlayers';
-import dotenv from 'dotenv';
-import { DetailedPlayer, DetailedPlayersResponse } from './types/DetailedPlayers';
+import { DetailedPlayersResponse } from './types/DetailedPlayers';
 dotenv.config();
 
 const app = express();
@@ -16,7 +16,7 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
-
+updatePlayersWithGroups()
 // Create API router
 const apiRouter = Router();
 
@@ -53,37 +53,22 @@ apiRouter.post('/analysis/team', async (req, res) => {
   try {
     const players = req.body.players;
     
-    // Read the detailed players data
     const detailedPlayersRaw = await import('./public/detailed_players.json');
     const response = detailedPlayersRaw.default as unknown as DetailedPlayersResponse;
     const detailedPlayers = Object.values(response.players);
 
     const analyzedPlayers = players.map((player: any) => {
-      // Convert the incoming player data to match DetailedPlayer interface
-      const detailedPlayer: Partial<DetailedPlayer> = {
-        i: player.id,
-        tp: player.totalPoints || 0,
-        ap: player.averagePoints || 0,
-        st: player.status,
-        pos: player.position
-      };
+      const detailedPlayer = detailedPlayers.find(p => p.i === player.id);
+      if (!detailedPlayer) return null;
 
       const score = categorizePlayer(detailedPlayer, detailedPlayers);
-
-      let recommendation = '';
-      if (score > 70) {
-        recommendation = 'Keep - Strong performer';
-      } else if (score > 40) {
-        recommendation = 'Monitor - Average performer';
-      } else {
-        recommendation = 'Consider replacing - Underperforming';
-      }
-
+      const alternatives = findAlternativePlayers(detailedPlayer, detailedPlayers);
+      
       return {
         id: player.id,
         analysis: {
-          score: score,
-          recommendation
+          score,
+          alternatives
         }
       };
     });

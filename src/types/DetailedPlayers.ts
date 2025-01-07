@@ -48,6 +48,7 @@ interface DetailedPlayer {
   plpt: string;        // Player Platform Type
   dt?: string;         // Date/Time
   opl: any[];         // Other Player List
+  group?: string;
 }
 
 interface DetailedPlayersResponse {
@@ -57,4 +58,4 @@ interface DetailedPlayersResponse {
   date: string;
 }
 
-export type { DetailedPlayer, DetailedPlayersResponse, MatchDay, PerformanceHistory }; 
+export type { DetailedPlayer, DetailedPlayersResponse, MatchDay, PerformanceHistory };
