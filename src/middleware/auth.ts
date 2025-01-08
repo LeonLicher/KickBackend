@@ -15,7 +15,8 @@ export const authenticateUser: RequestHandler = (
 ) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized - No token provided' });
+    res.status(401).json({ error: 'Unauthorized - No token provided' });
+    return next();
   }
 
   const token = authHeader.split('Bearer ')[1];
@@ -30,5 +31,6 @@ export const authenticateUser: RequestHandler = (
     .catch(error => {
       console.error('Authentication error:', error);
       res.status(401).json({ error: 'Unauthorized - Invalid token' });
+      next();
     });
 }; 
