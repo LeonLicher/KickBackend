@@ -71,7 +71,7 @@ interface LogRequestBody {
   leagueId?: string;
 }
 
-const handleLog: RequestHandler = async (req, res, next) => {
+const handleLog = async (req:any, res:any) => {
   try {
     console.log('Received auth log data:', req.body);
     
