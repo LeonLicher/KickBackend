@@ -1,11 +1,10 @@
 import cors from 'cors';
 import dotenv from 'dotenv';
 import express, { RequestHandler } from 'express';
-import rateLimit from 'express-rate-limit';
 import { addDoc, collection, Timestamp } from 'firebase/firestore';
 import { db } from './config/firebase';
 import { authenticateUser, AuthRequest } from './middleware/auth';
-import { categorizePlayer, findAlternativePlayers, updatePlayersWithGroups } from './model/categorizePlayers';
+import { categorizePlayer, findAlternativePlayers } from './model/categorizePlayers';
 import { getAuthLogs, logAuth } from './services/firebase';
 import { AuthLog } from './types/AuthLogs';
 import { DetailedPlayersResponse } from './types/DetailedPlayers';
@@ -15,15 +14,6 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3001;
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
-});
-
-// Middleware
-app.use(limiter);
-app.set('trust proxy', true);
 app.use(cors({
   origin: ['http://localhost:5173', 'https://leonlicher.github.io'],
   credentials: true
