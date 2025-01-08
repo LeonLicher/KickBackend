@@ -60,16 +60,16 @@ const handlePublicData: RequestHandler = async (req, res, next) => {
   }
 };
 
-interface LogRequestBody {
-  deviceInfo: Record<string, any>;
-  timestamp: Date;
-  action: 'login' | 'logout';
-  userId?: string;
-  userName?: string;
-  success?: boolean;
-  error?: string;
-  leagueId?: string;
-}
+// interface LogRequestBody {
+//   deviceInfo: Record<string, any>;
+//   timestamp: Date;
+//   action: 'login' | 'logout';
+//   userId?: string;
+//   userName?: string;
+//   success?: boolean;
+//   error?: string;
+//   leagueId?: string;
+// }
 
 const handleLog = async (req:any, res:any) => {
   try {
