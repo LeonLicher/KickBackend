@@ -3,9 +3,8 @@ import dotenv from 'dotenv';
 import express, { RequestHandler } from 'express';
 import { addDoc, collection, Timestamp } from 'firebase/firestore';
 import { db } from './config/firebase';
-import { authenticateUser, AuthRequest } from './middleware/auth';
 import { categorizePlayer, findAlternativePlayers } from './model/categorizePlayers';
-import { getAuthLogs, logAuth } from './services/firebase';
+import { logAuth } from './services/firebase';
 import { AuthLog } from './types/AuthLogs';
 import { DetailedPlayersResponse } from './types/DetailedPlayers';
 
@@ -112,16 +111,16 @@ const handleLog = async (req:any, res:any) => {
 publicRouter.post('/data', handlePublicData);
 apiRouter.post('/log', handleLog);
 
-apiRouter.get('/logs', authenticateUser, async (req: AuthRequest, res) => {
-  console.log('Received request to fetch auth logs');
-  try {
-    const logs = await getAuthLogs();
-    res.json(logs);
-  } catch (error) {
-    console.error('Error fetching auth logs:', error);
-    res.status(500).json({ error: 'Failed to fetch auth logs' });
-  }
-});
+// apiRouter.get('/logs', async (req:, res) => {
+//   console.log('Received request to fetch auth logs');
+//   try {
+//     const logs = await getAuthLogs();
+//     res.json(logs);
+//   } catch (error) {
+//     console.error('Error fetching auth logs:', error);
+//     res.status(500).json({ error: 'Failed to fetch auth logs' });
+//   }
+// });
 
 apiRouter.post('/analysis/team', async (req, res) => {
   console.log('Received request to analyze team');
