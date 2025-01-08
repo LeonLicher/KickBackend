@@ -1,0 +1,30 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to rate limit writes
+    function requestLimitNotExceeded() {
+      let recentWrites = getCountFromTime(
+        /databases/$(database)/documents/writes/$(request.time.toDate().toDateString()),
+        duration.value(1, 'h')
+      );
+      return recentWrites < 100;
+    }
+    
+    // Helper function to validate log data
+    function isValidLogData(data) {
+      return data.keys().hasAll(['deviceInfo', 'timestamp', 'action']) 
+        && data.timestamp is timestamp
+        && data.deviceInfo is map
+        && data.action is string
+        && data.action.size() < 100;  // Reasonable size limit for action
+    }
+
+    // Auth logs collection (now public with validation)
+    match /auth_logs/{logId} {
+      allow read: if request.auth != null;  // Keep reading protected
+      allow create: if isValidLogData(request.resource.data)
+        && requestLimitNotExceeded()
+        && request.resource.data.size() < 2000;  // Reasonable size limit for entire document
+    }
+  }
+} 

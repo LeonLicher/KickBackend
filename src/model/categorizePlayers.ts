@@ -55,36 +55,34 @@ interface AlternativePlayer {
 }
 
 function findAlternativePlayers(player: DetailedPlayer, allPlayers: DetailedPlayer[]): AlternativePlayer[] {
-  // Skip if player doesn't have market value, tp, or ap
-  if (!player.mv || !player.tp || !player.ap) {
+  // Skip if player doesn't have required stats
+  if (!player.tp || !player.ap || !player.pos) {
     return [];
   }
 
+  const playerPerformance = player.tp + player.ap;
+
   return allPlayers
-    .filter((p): p is DetailedPlayer & { mv: number; tp: number; ap: number; fn: string; ln: string } => 
+    .filter((p): p is DetailedPlayer & { tp: number; ap: number; fn: string; ln: string; pos: string } => 
       // Type guard to ensure all required properties exist
-      !!p.mv && !!p.tp && !!p.ap && !!p.fn && !!p.ln &&
-      // Must be cheaper
-      p.mv < player.mv &&
-      // Must perform better (using non-null assertion since we checked above)
-      p.tp > player.tp! &&
-      p.ap > player.ap! &&
+      !!p.tp && !!p.ap && !!p.fn && !!p.ln && !!p.pos &&
+      // Must be same position
+      p.pos === player.pos &&
       // Must not be the same player
       p.i !== player.i
     )
-    .map(p => ({
-      id: p.i,
-      name: p.ln,
-      tp: p.tp,
-      ap: p.ap,
-      mv: p.mv,
-      difference: player.mv - p.mv
-    }))
-    .sort((a, b) => {
-      // Since we checked for tp and ap in the filter above, we can safely assert they exist in player
-      const playerScore = (player.tp! + player.ap!);
-      return ((b.tp + b.ap) - playerScore) - ((a.tp + a.ap) - playerScore);
+    .map(p => {
+      const performanceDiff = Math.abs((p.tp + p.ap) - playerPerformance);
+      return {
+        id: p.i,
+        name: p.ln,
+        tp: p.tp,
+        ap: p.ap,
+        mv: p.mv || 0,
+        difference: performanceDiff
+      };
     })
+    .sort((a, b) => a.difference - b.difference) // Sort by smallest performance difference
     .slice(0, 10);
 }
 
@@ -101,7 +99,7 @@ async function analyzeTeam() {
       
       return {
         id: player.i,
-        name: `${player.fn} ${player.ln}`,
+        name: player.ln,
         score,
         group: assignPercentileGroup(score),
         alternatives
