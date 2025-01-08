@@ -23,13 +23,13 @@ const limiter = rateLimit({
 
 // Middleware
 app.use(limiter);
+app.set('trust proxy', true);
 app.use(cors({
   origin: ['http://localhost:5173', 'https://leonlicher.github.io'],
   credentials: true
 }));
 app.use(express.json());
 
-updatePlayersWithGroups()
 
 // Create routers
 const apiRouter = express.Router();
