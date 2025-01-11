@@ -14,7 +14,7 @@ const app = express();
 const port = process.env.PORT || 3001;
 
 app.use(cors({
-  origin: ['http://localhost:5173', 'https://leonlicher.github.io'],
+  origin: ['http://localhost:5173', 'https://leonlicher.github.io', "*"],
   credentials: true
 }));
 app.use(express.json());
@@ -111,8 +111,9 @@ const handleLog = async (req:any, res:any) => {
 publicRouter.post('/data', handlePublicData);
 apiRouter.post('/log', handleLog);
 
-apiRouter.get('/keepAlive', async (req, res) => {
-  console.log("keepAlive called")
+publicRouter.get('/keepAlive', async (req, res) => {
+  res.json( "success");
+
 })
 
 
