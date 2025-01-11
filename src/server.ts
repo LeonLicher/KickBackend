@@ -111,6 +111,11 @@ const handleLog = async (req:any, res:any) => {
 publicRouter.post('/data', handlePublicData);
 apiRouter.post('/log', handleLog);
 
+apiRouter.get('/keepAlive', async (req, res) => {
+  console.log("keepAlive called")
+})
+
+
 // apiRouter.get('/logs', async (req:, res) => {
 //   console.log('Received request to fetch auth logs');
 //   try {
