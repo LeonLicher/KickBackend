@@ -9,6 +9,11 @@ interface HttpResponse {
   data: string;
 }
 
+interface CacheEntry {
+  content: string;
+  timestamp: number;
+}
+
 export interface DomFilter {
   type: "visibility" | string; // extensible for future filter types
   selector: string; // CSS selector to find the element
@@ -26,17 +31,28 @@ export const ALTERNATIVES_FILTER: DomFilter = {
 
 export class HtmlParser {
   private logger: Logger;
+  private cache: Map<string, CacheEntry> = new Map();
+  private cacheDurationMs: number;
 
-  constructor(logger: Logger) {
+  constructor(logger: Logger, cacheDurationMinutes: number = 10) {
     this.logger = logger;
+    this.cacheDurationMs = cacheDurationMinutes * 60 * 1000;
   }
 
   /**
-   * Fetch HTML content from URL
+   * Fetch HTML content from URL, using cache if available
    */
   public async fetchHtml(url: string): Promise<string | null> {
+    const now = Date.now();
+    const cachedEntry = this.cache.get(url);
+
+    if (cachedEntry && now - cachedEntry.timestamp < this.cacheDurationMs) {
+      this.logger.info(`Cache hit for URL: ${url}`);
+      return cachedEntry.content;
+    }
+
+    this.logger.info(`Cache miss or expired for URL: ${url}. Fetching...`);
     try {
-      this.logger.info(`Fetching HTML from: ${url}`);
       const htmlContent = await httpClient.get<string>(url, undefined, "text");
 
       if (!htmlContent) {
@@ -44,6 +60,10 @@ export class HtmlParser {
       }
 
       this.logger.debug(`Received HTML length: ${htmlContent.length}`);
+      // Store in cache
+      this.cache.set(url, { content: htmlContent, timestamp: now });
+      this.logger.info(`Cached content for URL: ${url}`);
+
       return htmlContent;
     } catch (error) {
       const errorMessage =
