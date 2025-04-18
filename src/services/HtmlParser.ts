@@ -20,6 +20,7 @@ export interface DomFilter {
   condition: (element: cheerio.Cheerio<AnyNode>) => boolean; // function that returns true if element passes the filter
 }
 
+// Spieler ohne Alternativen
 export const ALTERNATIVES_FILTER: DomFilter = {
   type: "visibility",
   selector: ".sub_child",
@@ -28,6 +29,22 @@ export const ALTERNATIVES_FILTER: DomFilter = {
     return displayStyle === "block";
   },
 };
+
+// Spieler ohne Alternativen
+export const PFEIL_FILTER: DomFilter = {
+  type: "Pfeil",
+  selector: "div.player_name", // Assuming you want to check within player_name divs
+  condition: (element: cheerio.Cheerio<AnyNode>) => {
+    return element.find("div.next_sub").length > 0; // Check if there's a div with class "next_sub"
+  },
+};
+
+export const FILTER_MAP = {
+  ALTERNATIVES: ALTERNATIVES_FILTER,
+  PFEIL: PFEIL_FILTER,
+};
+
+export type FilterName = keyof typeof FILTER_MAP;
 
 export class HtmlParser {
   private logger: Logger;
@@ -93,6 +110,7 @@ export class HtmlParser {
         return domFilter.condition(parentElement);
       });
 
+      console.log("🚀 ~ HtmlParser ~ domFilter:", JSON.stringify(domFilter));
       this.logger.info(
         `Found ${playerNameDivs.length} matching player_name divs (filter: ${
           domFilter?.type || "none"
@@ -137,110 +155,6 @@ export class HtmlParser {
           return false; // Break each loop
         }
       });
-
-      if (result) return result;
-
-      // Then try to find the player in the boost elements (lineup section)
-      /*
-      const boostElements = $('[class^="boost"]');
-      this.logger.info(`Found ${boostElements.length} boost elements`);
-
-      boostElements.each((_, element) => {
-        if (result) return; // Skip if we already found a result
-
-        const playerText = $(element).text().trim();
-
-        if (playerText.toLowerCase().includes(playerName.toLowerCase())) {
-          playerFound = true;
-          this.logger.info(`Found matching player in lineup: ${playerName}`);
-
-          // Check if there's injury info nearby
-          const statusElement = $(element).closest(".stadium_container_bg")
-            .length
-            ? $(element).closest(".stadium_container_bg")
-            : $(element).parent();
-
-          if (statusElement.length) {
-            const statusText = statusElement.text();
-            const isInjured =
-              statusText.includes("Verletzt") ||
-              statusText.includes("Angeschlagen") ||
-              statusText.includes("Gesperrt") ||
-              statusText.includes("Trainingsrückstand");
-
-            let reason = "";
-            if (isInjured) {
-              // Try to extract the reason if available
-              const reasonMatch = statusText.match(
-                /(?:Verletzt|Angeschlagen|Gesperrt|Trainingsrückstand):\s*(.+?)(?:\s|$)/
-              );
-              reason = reasonMatch ? reasonMatch[1] : statusText;
-            }
-
-            result = {
-              isLikelyToPlay: !isInjured,
-              reason: isInjured ? reason : undefined,
-              lastChecked: new Date(),
-            };
-            return false; // Break each loop
-          } else {
-            result = {
-              isLikelyToPlay: true,
-              lastChecked: new Date(),
-            };
-            return false; // Break each loop
-          }
-        }
-      });
-
-      if (result) return result;
-
-      // If not found in specific elements, try all img elements
-      const imgElements = $("img");
-      this.logger.info(`Found ${imgElements.length} img elements`);
-
-      imgElements.each((_, img) => {
-        if (result) return; // Skip if we already found a result
-
-        const srcAttr = $(img).attr("src") || "";
-
-        if (srcAttr.toLowerCase().includes(playerName.toLowerCase())) {
-          playerFound = true;
-          this.logger.info(
-            `Found matching image for player: ${playerName} at URL: ${srcAttr}`
-          );
-
-          // If in "Gegen ... fehlen" section, player is injured
-          const injurySection = $(img).closest("table").length
-            ? $(img).closest("table")
-            : $(img).closest("section");
-          if (injurySection.length && injurySection.text().includes("fehlen")) {
-            // Try to find the reason
-            const reasonText = injurySection.text();
-            const reasonRegex = new RegExp(
-              `${playerName}.*?(Verletzt|Angeschlagen|Gesperrt|Trainingsrückstand).*?`,
-              "i"
-            );
-            const reasonMatch = reasonText.match(reasonRegex);
-            const reason = reasonMatch ? reasonMatch[0] : "Nicht im Kader";
-
-            result = {
-              isLikelyToPlay: false,
-              reason: reason,
-              lastChecked: new Date(),
-            };
-            return false; // Break each loop
-          }
-
-          result = {
-            isLikelyToPlay: true,
-            lastChecked: new Date(),
-          };
-          return false; // Break each loop
-        }
-      });
-      */
-
       if (result) return result;
 
       // If player was not found in the lineup or images
@@ -266,6 +180,7 @@ export class HtmlParser {
     playerName: string,
     domFilter?: DomFilter
   ): Promise<PlayerAvailabilityInfo | null> {
+    console.log("🚀 ~ HtmlParser ~ domFilter:", domFilter);
     try {
       const html = await this.fetchHtml(teamUrl);
 
@@ -273,6 +188,7 @@ export class HtmlParser {
         this.logger.error(`Failed to fetch HTML content for ${playerName}`);
         return null;
       }
+
       return this.parsePlayerStatus(html, playerName, domFilter);
     } catch (error) {
       const errorMessage =

@@ -9,12 +9,12 @@ import {
   findAlternativePlayers,
 } from "./model/categorizePlayers";
 import logger from "./model/logger";
-import { Player } from "./model/player";
-import { ALTERNATIVES_FILTER, HtmlParser } from "./services/HtmlParser";
+import { FILTER_MAP, FilterName, HtmlParser } from "./services/HtmlParser";
 import { logAuth } from "./services/firebase";
 import { AuthLog } from "./types/AuthLogs";
 import { DetailedPlayersResponse } from "./types/DetailedPlayers";
 import teamMapping from "./utils/teamMapping";
+import { Player } from "./model/player";
 
 dotenv.config();
 
@@ -33,6 +33,23 @@ app.use(express.json());
 // Create routers
 const apiRouter = express.Router();
 const publicRouter = express.Router();
+
+interface CheckAvailabilityRequest {
+  player: {
+    firstName: string;
+    teamId: string;
+  };
+  filterName?: FilterName; // Changed from filter to filterName
+}
+
+interface CheckTeamAvailabilityRequest {
+  players: {
+    id: string;
+    firstName: string;
+    teamId: string;
+  }[];
+  filterName?: FilterName;
+}
 
 // Public data handler
 publicRouter.post("/data", async (req, res) => {
@@ -111,7 +128,8 @@ apiRouter.post("/log", async (req, res) => {
 // Player availability check
 apiRouter.post("/check-availability", async (req, res) => {
   try {
-    const { player } = req.body;
+    const { player, filterName }: CheckAvailabilityRequest = req.body;
+    const filter = filterName ? FILTER_MAP[filterName] : undefined;
 
     if (!player || !player.firstName || !player.teamId) {
       return res
@@ -125,7 +143,7 @@ apiRouter.post("/check-availability", async (req, res) => {
     const playerStatus = await htmlParser.fetchAndParsePlayerStatus(
       teamUrl,
       player.firstName,
-      ALTERNATIVES_FILTER
+      filter
     );
 
     if (playerStatus) {
@@ -155,9 +173,10 @@ apiRouter.post("/check-availability", async (req, res) => {
 });
 
 // Team availability check
-apiRouter.post("/check-team-availability", async (req, res, next) => {
+apiRouter.post("/check-team-availability", async (req, res) => {
   try {
-    const { players } = req.body;
+    const { players, filterName }: CheckTeamAvailabilityRequest = req.body;
+    const filter = filterName ? FILTER_MAP[filterName] : undefined;
 
     if (!players || !Array.isArray(players) || players.length === 0) {
       return res
@@ -183,7 +202,7 @@ apiRouter.post("/check-team-availability", async (req, res, next) => {
         const playerStatus = await htmlParser.fetchAndParsePlayerStatus(
           teamUrl,
           player.firstName,
-          ALTERNATIVES_FILTER
+          filter
         );
 
         if (!playerStatus) {
