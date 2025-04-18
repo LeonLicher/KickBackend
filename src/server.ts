@@ -24,7 +24,7 @@ export const httpClient = new HttpClient("");
 
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://leonlicher.github.io", "*"],
+    origin: ["http://localhost:5173", "https://leonlicher.github.io"],
     credentials: true,
   })
 );
