@@ -30,12 +30,22 @@ export const ALTERNATIVES_FILTER: DomFilter = {
   },
 };
 
-// Spieler ohne Alternativen
+// Spieler ohne Pfeil (no arrow indicator)
 export const PFEIL_FILTER: DomFilter = {
   type: "Pfeil",
-  selector: "div.player_name", // Assuming you want to check within player_name divs
+  selector: "div.player_name",
   condition: (element: cheerio.Cheerio<AnyNode>) => {
-    return element.find("div.next_sub").length > 0; // Check if there's a div with class "next_sub"
+    // Find the parent sub_child div
+    const parentSubChild = element.closest(".sub_child");
+
+    // If there's no parent sub_child, keep the player
+    if (parentSubChild.length === 0) return true;
+
+    // Find .player_no elements within the parent that contain .next_sub
+    const playerNoWithNextSub = parentSubChild.find(".player_no .next_sub");
+
+    // Return true (keep player) if no next_sub is found
+    return playerNoWithNextSub.length === 0;
   },
 };
 
