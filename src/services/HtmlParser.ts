@@ -162,8 +162,9 @@ export class HtmlParser {
 
     /**
      * Compute the PlayerAvailabilityInfo for one <div class="player_name"> element.
+     * This is used by the index-building approach for bulk processing.
      */
-    private computeStatus(
+    private indexParsePlayerStatus(
         $: cheerio.CheerioAPI,
         playerDiv: cheerio.Cheerio<AnyNode>
     ): PlayerAvailabilityInfo {
@@ -210,7 +211,7 @@ export class HtmlParser {
         playerNameDivs.each((_, div) => {
             const playerDiv = $(div)
             const name = playerDiv.text().trim().toLowerCase()
-            const status = this.computeStatus($, playerDiv)
+            const status = this.indexParsePlayerStatus($, playerDiv) // Changed function name here
             statusMap.set(name, status)
 
             // Persist to second‑level cache
@@ -289,54 +290,233 @@ export class HtmlParser {
         }
 
         this.logger.debug(
-            `fetchHtml took ${(htmlEndTime - htmlStartTime).toFixed(
-                2
-            )}ms for ${playerName}`
+            `fetchHtml took ${(htmlEndTime - htmlStartTime).toFixed(2)}ms for ${playerName}`
         )
 
-        // Build index and fill cache
-        const indexStartTime = performance.now()
-        const statusMap = this.buildPlayerStatusIndex(teamUrl, html, domFilter)
-        const indexEndTime = performance.now()
+        // Use the new optimized parsing for individual player lookups
+        const startTime = performance.now()
+        const playerStatus = await this.parsePlayerStatus(
+            html,
+            playerName,
+            domFilter
+        )
+        const endTime = performance.now()
 
         this.logger.debug(
-            `buildPlayerStatusIndex took ${(
-                indexEndTime - indexStartTime
-            ).toFixed(2)}ms, found ${statusMap.size} players`
-        )
-        this.logger.debug(
-            `Player index contains: [${Array.from(statusMap.keys()).join(', ')}]`
+            `Total parsing took ${(endTime - startTime).toFixed(2)}ms`
         )
 
-        // Return requested player's status or default "not found"
-        const playerNameLower = playerName.toLowerCase()
-        const status = statusMap.get(playerNameLower)
-
-        if (status) {
-            this.logger.info(`Found player ${playerName} in parsed index`)
-            return status
+        // Cache the result
+        if (playerStatus) {
+            this.statusCache.set(cacheKey, {
+                info: playerStatus,
+                timestamp: now,
+            })
+            this.logger.debug(`Cached status for ${playerName}`)
         }
 
-        this.logger.warning(
-            `Player ${playerName} (lowercase: "${playerNameLower}") not found in player index with filter: ${
-                domFilter?.type ?? 'none'
-            }`
-        )
+        return playerStatus
+    }
 
-        const defaultInfo: PlayerAvailabilityInfo = {
-            isLikelyToPlay: false,
-            reason: 'Nicht im Kader',
-            lastChecked: new Date(),
+    /**
+     * Parse HTML to check player availability more efficiently by only loading relevant parts
+     */
+    public async parsePlayerStatus(
+        html: string,
+        playerName: string,
+        domFilter?: DomFilter
+    ): Promise<PlayerAvailabilityInfo | null> {
+        try {
+            const startTime = performance.now()
+            this.logger.info(
+                `Parsing HTML content to find status for ${playerName}`
+            )
+
+            // Lowercase the player name once for efficiency
+            const playerNameLower = playerName.toLowerCase()
+
+            // First try to find a smaller section containing the player
+            // Most player content is inside elements with these classes
+            const targetSectionRegex = new RegExp(
+                `<div\\s+class="(?:sub_child|player_position_photo|player_content)[^"]*"[^>]*>[\\s\\S]*?${playerNameLower}[\\s\\S]*?</div>`,
+                'i'
+            )
+
+            const htmlLower = html.toLowerCase() // Convert once for faster case-insensitive search
+
+            // Quick check if player name exists in the document at all
+            if (!htmlLower.includes(playerNameLower)) {
+                this.logger.warning(
+                    `Player ${playerName} not found in HTML content (quick check)`
+                )
+                return {
+                    isLikelyToPlay: false,
+                    reason: 'Nicht im Kader',
+                    lastChecked: new Date(),
+                }
+            }
+
+            // Find relevant sections that might contain the player
+            const matches = html.match(new RegExp(targetSectionRegex, 'gi'))
+
+            if (!matches || matches.length === 0) {
+                this.logger.warning(
+                    `No sections containing ${playerName} found in HTML. Falling back to full parsing.`
+                )
+                // Fall back to full parsing as before
+                return this.legacyParsePlayerStatus(html, playerName, domFilter)
+            }
+
+            // Combine matched sections into a smaller HTML document
+            const reducedHtml = `<div id="reduced-content">${matches.join('')}</div>`
+            this.logger.debug(
+                `Reduced HTML size from ${html.length} to ${reducedHtml.length} characters`
+            )
+
+            // Load only the relevant parts into cheerio
+            const $ = cheerio.load(reducedHtml)
+
+            // Apply filters to player_name divs in the reduced HTML
+            const playerNameDivs = $('div.player_name').filter(function () {
+                if (!domFilter) return true
+                const parentElement = $(this).closest(domFilter.selector)
+                if (parentElement.length === 0) return true
+                return domFilter.condition(parentElement)
+            })
+
+            this.logger.info(
+                `Found ${playerNameDivs.length} matching player_name divs in reduced HTML (filter: ${domFilter?.type ?? 'none'})`
+            )
+
+            let result: PlayerAvailabilityInfo | null = null
+
+            playerNameDivs.each((_, div) => {
+                if (result) return // Skip if we already found a result
+
+                const playerText = $(div).text().trim()
+
+                if (playerText.toLowerCase().includes(playerNameLower)) {
+                    // Found the player
+                    this.logger.info(
+                        `Found matching player in reduced HTML: ${playerName}`
+                    )
+
+                    // Check if player is in an injury section
+                    const parentText = $(div).parent().text() || ''
+                    if (
+                        /Verletzt|Angeschlagen|Gesperrt|fehlen/i.test(
+                            parentText
+                        )
+                    ) {
+                        result = {
+                            isLikelyToPlay: false,
+                            reason: 'Verletzung oder Sperre',
+                            lastChecked: new Date(),
+                        }
+                        return false // Break each loop
+                    }
+
+                    result = {
+                        isLikelyToPlay: true,
+                        lastChecked: new Date(),
+                    }
+                    return false // Break each loop
+                }
+            })
+
+            if (result) {
+                const endTime = performance.now()
+                this.logger.info(
+                    `Optimized parsing completed in ${(endTime - startTime).toFixed(2)}ms`
+                )
+                return result
+            }
+
+            // If optimized parsing didn't find the player, try legacy method
+            this.logger.info(
+                `Player not found in reduced HTML. Falling back to full parsing.`
+            )
+            return this.legacyParsePlayerStatus(html, playerName, domFilter)
+        } catch (error) {
+            this.logger.error(
+                `Error in optimized parsing, falling back to legacy method`
+            )
+            return this.legacyParsePlayerStatus(html, playerName, domFilter)
         }
+    }
 
-        // Also cache the negative result to avoid re‑parsing shortly after
-        this.statusCache.set(cacheKey, { info: defaultInfo, timestamp: now })
-        this.logger.info(
-            `Cached negative result for ${playerName} (filter: ${
-                domFilter?.type ?? 'none'
-            })`
-        )
+    /**
+     * Legacy full parsing method as backup
+     */
+    private legacyParsePlayerStatus(
+        html: string,
+        playerName: string,
+        domFilter?: DomFilter
+    ): PlayerAvailabilityInfo | null {
+        try {
+            const $ = cheerio.load(html)
 
-        return defaultInfo
+            // First look specifically for the player_name div structure
+            const playerNameDivs = $('div.player_name').filter(function () {
+                if (!domFilter) return true
+                const parentElement = $(this).closest(domFilter.selector)
+                if (parentElement.length === 0) return true
+                return domFilter.condition(parentElement)
+            })
+
+            this.logger.info(
+                `Legacy parsing found ${playerNameDivs.length} player_name divs (filter: ${domFilter?.type ?? 'none'})`
+            )
+
+            const playerNameLower = playerName.toLowerCase()
+            let result: PlayerAvailabilityInfo | null = null
+
+            playerNameDivs.each((_, div) => {
+                if (result) return // Skip if already found
+
+                const playerText = $(div).text().trim()
+
+                if (playerText.toLowerCase().includes(playerNameLower)) {
+                    // Check if player is in an injury section
+                    const parentSection = $(div).closest('section')
+                    if (
+                        parentSection.length &&
+                        /Verletzt|Angeschlagen|Gesperrt|fehlen/i.test(
+                            parentSection.text()
+                        )
+                    ) {
+                        result = {
+                            isLikelyToPlay: false,
+                            reason: 'Verletzung oder Sperre',
+                            lastChecked: new Date(),
+                        }
+                        return false
+                    }
+
+                    result = {
+                        isLikelyToPlay: true,
+                        lastChecked: new Date(),
+                    }
+                    return false
+                }
+            })
+
+            if (result) return result
+
+            // Player not found
+            this.logger.warning(
+                `Player ${playerName} not found in HTML content`
+            )
+            return {
+                isLikelyToPlay: false,
+                reason: 'Nicht im Kader',
+                lastChecked: new Date(),
+            }
+        } catch (error) {
+            const errorMessage =
+                error instanceof Error ? error.message : String(error)
+            this.logger.error(`Error in legacy parsing: ${errorMessage}`)
+            return null
+        }
     }
 }
