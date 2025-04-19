@@ -161,68 +161,6 @@ export class HtmlParser {
     }
 
     /**
-     * Compute the PlayerAvailabilityInfo for one <div class="player_name"> element.
-     * This is used by the index-building approach for bulk processing.
-     */
-    private indexParsePlayerStatus(
-        $: cheerio.CheerioAPI,
-        playerDiv: cheerio.Cheerio<AnyNode>
-    ): PlayerAvailabilityInfo {
-        const parentSection = playerDiv.closest('section')
-        if (
-            parentSection.length &&
-            /Verletzt|Angeschlagen|Gesperrt|fehlen/.test(parentSection.text())
-        ) {
-            return {
-                isLikelyToPlay: false,
-                reason: 'Verletzung oder Sperre',
-                lastChecked: new Date(),
-            }
-        }
-
-        return {
-            isLikelyToPlay: true,
-            lastChecked: new Date(),
-        }
-    }
-
-    /**
-     * Parse the whole HTML once and build an index of playerName → status.
-     * Also populates the status‑level cache so subsequent look‑ups are O(1).
-     */
-    private buildPlayerStatusIndex(
-        url: string,
-        html: string,
-        domFilter?: DomFilter
-    ): Map<string, PlayerAvailabilityInfo> {
-        const now = Date.now()
-
-        const $ = cheerio.load(html)
-
-        const playerNameDivs = $('div.player_name').filter(function () {
-            if (!domFilter) return true
-            const parentElement = $(this).closest(domFilter.selector)
-            if (parentElement.length === 0) return true
-            return domFilter.condition(parentElement)
-        })
-
-        const statusMap = new Map<string, PlayerAvailabilityInfo>()
-
-        playerNameDivs.each((_, div) => {
-            const playerDiv = $(div)
-            const name = playerDiv.text().trim().toLowerCase()
-            const status = this.indexParsePlayerStatus($, playerDiv) // Changed function name here
-            statusMap.set(name, status)
-
-            // Persist to second‑level cache
-            const cacheKey = this.buildStatusCacheKey(url, name, domFilter)
-            this.statusCache.set(cacheKey, { info: status, timestamp: now })
-        })
-
-        return statusMap
-    }
-
-    /**
      * Public API: fetch & parse a player's status with two‑level caching.
      *
      * 1. Try status‑level cache → constant‑time.
@@ -319,7 +257,7 @@ export class HtmlParser {
     }
 
     /**
-     * Parse HTML to check player availability more efficiently by only loading relevant parts
+     * Parse HTML to check player availability
      */
     public async parsePlayerStatus(
         html: string,
@@ -335,17 +273,8 @@ export class HtmlParser {
             // Lowercase the player name once for efficiency
             const playerNameLower = playerName.toLowerCase()
 
-            // First try to find a smaller section containing the player
-            // Most player content is inside elements with these classes
-            const targetSectionRegex = new RegExp(
-                `<div\\s+class="(?:sub_child|player_position_photo|player_content)[^"]*"[^>]*>[\\s\\S]*?${playerNameLower}[\\s\\S]*?</div>`,
-                'i'
-            )
-
-            const htmlLower = html.toLowerCase() // Convert once for faster case-insensitive search
-
             // Quick check if player name exists in the document at all
-            if (!htmlLower.includes(playerNameLower)) {
+            if (!html.toLowerCase().includes(playerNameLower)) {
                 this.logger.warning(
                     `Player ${playerName} not found in HTML content (quick check)`
                 )
@@ -356,107 +285,10 @@ export class HtmlParser {
                 }
             }
 
-            // Find relevant sections that might contain the player
-            const matches = html.match(new RegExp(targetSectionRegex, 'gi'))
-
-            if (!matches || matches.length === 0) {
-                this.logger.warning(
-                    `No sections containing ${playerName} found in HTML. Falling back to full parsing.`
-                )
-                // Fall back to full parsing as before
-                return this.legacyParsePlayerStatus(html, playerName, domFilter)
-            }
-
-            // Combine matched sections into a smaller HTML document
-            const reducedHtml = `<div id="reduced-content">${matches.join('')}</div>`
-            this.logger.debug(
-                `Reduced HTML size from ${html.length} to ${reducedHtml.length} characters`
-            )
-
-            // Load only the relevant parts into cheerio
-            const $ = cheerio.load(reducedHtml)
-
-            // Apply filters to player_name divs in the reduced HTML
-            const playerNameDivs = $('div.player_name').filter(function () {
-                if (!domFilter) return true
-                const parentElement = $(this).closest(domFilter.selector)
-                if (parentElement.length === 0) return true
-                return domFilter.condition(parentElement)
-            })
-
-            this.logger.info(
-                `Found ${playerNameDivs.length} matching player_name divs in reduced HTML (filter: ${domFilter?.type ?? 'none'})`
-            )
-
-            let result: PlayerAvailabilityInfo | null = null
-
-            playerNameDivs.each((_, div) => {
-                if (result) return // Skip if we already found a result
-
-                const playerText = $(div).text().trim()
-
-                if (playerText.toLowerCase().includes(playerNameLower)) {
-                    // Found the player
-                    this.logger.info(
-                        `Found matching player in reduced HTML: ${playerName}`
-                    )
-
-                    // Check if player is in an injury section
-                    const parentText = $(div).parent().text() || ''
-                    if (
-                        /Verletzt|Angeschlagen|Gesperrt|fehlen/i.test(
-                            parentText
-                        )
-                    ) {
-                        result = {
-                            isLikelyToPlay: false,
-                            reason: 'Verletzung oder Sperre',
-                            lastChecked: new Date(),
-                        }
-                        return false // Break each loop
-                    }
-
-                    result = {
-                        isLikelyToPlay: true,
-                        lastChecked: new Date(),
-                    }
-                    return false // Break each loop
-                }
-            })
-
-            if (result) {
-                const endTime = performance.now()
-                this.logger.info(
-                    `Optimized parsing completed in ${(endTime - startTime).toFixed(2)}ms`
-                )
-                return result
-            }
-
-            // If optimized parsing didn't find the player, try legacy method
-            this.logger.info(
-                `Player not found in reduced HTML. Falling back to full parsing.`
-            )
-            return this.legacyParsePlayerStatus(html, playerName, domFilter)
-        } catch (error) {
-            this.logger.error(
-                `Error in optimized parsing, falling back to legacy method`
-            )
-            return this.legacyParsePlayerStatus(html, playerName, domFilter)
-        }
-    }
-
-    /**
-     * Legacy full parsing method as backup
-     */
-    private legacyParsePlayerStatus(
-        html: string,
-        playerName: string,
-        domFilter?: DomFilter
-    ): PlayerAvailabilityInfo | null {
-        try {
+            // Load the HTML into cheerio
             const $ = cheerio.load(html)
 
-            // First look specifically for the player_name div structure
+            // Find player_name divs that match our filter
             const playerNameDivs = $('div.player_name').filter(function () {
                 if (!domFilter) return true
                 const parentElement = $(this).closest(domFilter.selector)
@@ -465,10 +297,9 @@ export class HtmlParser {
             })
 
             this.logger.info(
-                `Legacy parsing found ${playerNameDivs.length} player_name divs (filter: ${domFilter?.type ?? 'none'})`
+                `Found ${playerNameDivs.length} player_name divs (filter: ${domFilter?.type ?? 'none'})`
             )
 
-            const playerNameLower = playerName.toLowerCase()
             let result: PlayerAvailabilityInfo | null = null
 
             playerNameDivs.each((_, div) => {
@@ -501,7 +332,13 @@ export class HtmlParser {
                 }
             })
 
-            if (result) return result
+            if (result) {
+                const endTime = performance.now()
+                this.logger.info(
+                    `Parsing completed in ${(endTime - startTime).toFixed(2)}ms`
+                )
+                return result
+            }
 
             // Player not found
             this.logger.warning(
@@ -515,8 +352,169 @@ export class HtmlParser {
         } catch (error) {
             const errorMessage =
                 error instanceof Error ? error.message : String(error)
-            this.logger.error(`Error in legacy parsing: ${errorMessage}`)
-            return null
+            this.logger.error(`Error parsing player status: ${errorMessage}`)
+
+            // Return a default response even on error
+            return {
+                isLikelyToPlay: false,
+                reason: `Error: ${errorMessage}`,
+                lastChecked: new Date(),
+            }
         }
+    }
+
+    /**
+     * Pre-processes an entire team page, extracting all player statuses and caching them.
+     * This is used during preloading to avoid any HTML parsing during actual requests.
+     *
+     * @param teamUrl The URL of the team page
+     * @param html The HTML content of the team page
+     * @param domFilters Optional array of filters to apply (defaults to all filters)
+     * @returns The number of players that were successfully processed and cached
+     */
+    public async preparsePlayers(
+        teamUrl: string,
+        html: string,
+        domFilters: DomFilter[] = Object.values(FILTER_MAP)
+    ): Promise<number> {
+        try {
+            if (!html) {
+                this.logger.error(
+                    `Cannot parse empty HTML content from ${teamUrl}`
+                )
+                return 0
+            }
+
+            this.logger.info(`Preparsing players from team URL: ${teamUrl}`)
+            const $ = cheerio.load(html)
+            let parsedCount = 0
+            const now = Date.now()
+
+            // Find all player name divs
+            const playerNameDivs = $('div.player_name')
+            this.logger.info(
+                `Found ${playerNameDivs.length} player names in team page`
+            )
+
+            // Process each player
+            playerNameDivs.each((_, div) => {
+                const playerText = $(div).text().trim()
+                const playerName = playerText.toLowerCase()
+
+                if (!playerName) return
+
+                // For each player, process with each filter type
+                // This allows us to cache all possible filter combinations
+                domFilters.forEach((domFilter) => {
+                    // Skip if filter doesn't match
+                    const parentElement = $(div).closest(domFilter.selector)
+                    if (
+                        parentElement.length > 0 &&
+                        !domFilter.condition(parentElement)
+                    ) {
+                        return
+                    }
+
+                    // Check player availability
+                    let playerStatus: PlayerAvailabilityInfo
+
+                    // Check if player is in an injury section
+                    const parentSection = $(div).closest('section')
+                    if (
+                        parentSection.length &&
+                        /Verletzt|Angeschlagen|Gesperrt|fehlen/i.test(
+                            parentSection.text()
+                        )
+                    ) {
+                        playerStatus = {
+                            isLikelyToPlay: false,
+                            reason: 'Verletzung oder Sperre',
+                            lastChecked: new Date(),
+                        }
+                    } else {
+                        playerStatus = {
+                            isLikelyToPlay: true,
+                            lastChecked: new Date(),
+                        }
+                    }
+
+                    // Store in cache
+                    const cacheKey = this.buildStatusCacheKey(
+                        teamUrl,
+                        playerName,
+                        domFilter
+                    )
+                    this.statusCache.set(cacheKey, {
+                        info: playerStatus,
+                        timestamp: now,
+                    })
+                    parsedCount++
+                })
+            })
+
+            this.logger.info(
+                `Cached ${parsedCount} player statuses from team URL: ${teamUrl}`
+            )
+            return parsedCount
+        } catch (error) {
+            const errorMessage =
+                error instanceof Error ? error.message : String(error)
+            this.logger.error(`Error preparsing players: ${errorMessage}`)
+            return 0
+        }
+    }
+
+    /**
+     * Refresh the cache for a specific team URL.
+     * This fetches the team page and parses all players, updating the cache.
+     *
+     * @param teamUrl The URL of the team page to refresh
+     * @returns The number of players that were successfully processed and cached
+     */
+    public async refreshTeamCache(teamUrl: string): Promise<number> {
+        try {
+            this.logger.info(`Refreshing cache for team URL: ${teamUrl}`)
+
+            // Fetch the team page
+            const html = await this.fetchHtml(teamUrl)
+            if (!html) {
+                this.logger.error(`Failed to fetch HTML content for ${teamUrl}`)
+                return 0
+            }
+
+            // Parse all players on the page
+            const playerCount = await this.preparsePlayers(teamUrl, html)
+
+            this.logger.info(
+                `Successfully refreshed cache for ${teamUrl}, updated ${playerCount} player statuses`
+            )
+            return playerCount
+        } catch (error) {
+            const errorMessage =
+                error instanceof Error ? error.message : String(error)
+            this.logger.error(`Error refreshing team cache: ${errorMessage}`)
+            return 0
+        }
+    }
+
+    /**
+     * Get the current size of the HTML cache
+     */
+    public getHtmlCacheSize(): number {
+        return this.htmlCache.size
+    }
+
+    /**
+     * Get the current size of the status cache
+     */
+    public getStatusCacheSize(): number {
+        return this.statusCache.size
+    }
+
+    /**
+     * Get the keys of the HTML cache (typically team URLs)
+     */
+    public getHtmlCacheKeys(): string[] {
+        return Array.from(this.htmlCache.keys())
     }
 }

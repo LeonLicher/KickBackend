@@ -418,6 +418,72 @@ apiRouter.post('/analysis/team', async (req, res) => {
     }
 })
 
+// Cache management endpoint
+apiRouter.post('/refresh-team-cache', async (req, res) => {
+    try {
+        const { teamId } = req.body
+
+        if (!teamId) {
+            return res.status(400).json({ error: 'Team ID is required' })
+        }
+
+        logger.info(`Manual cache refresh requested for team ID: ${teamId}`)
+
+        // Get team URL
+        const teamUrl = teamMapping.getTeamUrl(teamId, '')
+
+        // Refresh the cache
+        const playerCount = await globalHtmlParser.refreshTeamCache(teamUrl)
+
+        return res.json({
+            success: true,
+            teamId,
+            teamUrl,
+            refreshedPlayers: playerCount,
+            timestamp: new Date(),
+        })
+    } catch (error) {
+        const errorMessage =
+            error instanceof Error ? error.message : String(error)
+        logger.error(`Error refreshing team cache: ${errorMessage}`)
+        return res.status(500).json({
+            error: 'Server error refreshing team cache',
+            details: errorMessage,
+        })
+    }
+})
+
+// Cache status endpoint for monitoring
+apiRouter.get('/cache-status', (req, res) => {
+    try {
+        // Get cache statistics from the HtmlParser
+        const htmlCacheSize = globalHtmlParser.getHtmlCacheSize()
+        const statusCacheSize = globalHtmlParser.getStatusCacheSize()
+        const htmlCacheKeys = globalHtmlParser.getHtmlCacheKeys()
+
+        // Return cache status information
+        return res.json({
+            success: true,
+            htmlCache: {
+                size: htmlCacheSize,
+                keys: htmlCacheKeys,
+            },
+            statusCache: {
+                size: statusCacheSize,
+            },
+            timestamp: new Date(),
+        })
+    } catch (error) {
+        const errorMessage =
+            error instanceof Error ? error.message : String(error)
+        logger.error(`Error getting cache status: ${errorMessage}`)
+        return res.status(500).json({
+            error: 'Server error getting cache status',
+            details: errorMessage,
+        })
+    }
+})
+
 // Add routers to app
 app.use('/public', publicRouter)
 app.use('/api', apiRouter)
@@ -457,8 +523,14 @@ async function preloadCommonTeams() {
                 const html = await globalHtmlParser.fetchHtml(teamUrl)
 
                 if (html) {
+                    // Parse all players on the page and cache them
+                    const playerCount = await globalHtmlParser.preparsePlayers(
+                        teamUrl,
+                        html
+                    )
+
                     logger.info(
-                        `Successfully preloaded team ID ${teamId}, HTML length: ${html.length}`
+                        `Successfully preloaded team ID ${teamId}, HTML length: ${html.length}, cached ${playerCount} player statuses`
                     )
                 } else {
                     logger.error(`Failed to preload team ID ${teamId}`)
@@ -480,5 +552,14 @@ app.listen(port, () => {
     // Warm up the cache after server starts
     setTimeout(() => {
         preloadCommonTeams()
+
+        // Set up periodic cache refresh (every 30 minutes)
+        setInterval(
+            () => {
+                logger.info('Running scheduled cache refresh...')
+                preloadCommonTeams()
+            },
+            30 * 60 * 1000
+        )
     }, 5000) // Wait 5 seconds after startup to avoid initial load
 })
