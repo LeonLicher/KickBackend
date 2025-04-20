@@ -15,14 +15,14 @@ interface StatusCacheEntry {
 }
 
 export interface DomFilter {
-    type: 'Alternatives' | 'Pfeil' // extensible for future filter types
+    type: 'STARTELF' | 'GESETZT' // extensible for future filter types
     selector: string // CSS selector to find the element
     condition: (element: cheerio.Cheerio<AnyNode>) => boolean // function that returns true if element passes the filter
 }
 
 // Spieler ohne Alternativen
-export const ALTERNATIVES_FILTER: DomFilter = {
-    type: 'Alternatives',
+export const STARTELF_FILTER: DomFilter = {
+    type: 'STARTELF',
     selector: '.sub_child',
     condition: (element: cheerio.Cheerio<AnyNode>) => {
         const displayStyle = element.css('display')
@@ -31,8 +31,8 @@ export const ALTERNATIVES_FILTER: DomFilter = {
 }
 
 // Spieler ohne Pfeil (no arrow indicator)
-export const PFEIL_FILTER: DomFilter = {
-    type: 'Pfeil',
+export const GESETZT_FILTER: DomFilter = {
+    type: 'GESETZT',
     selector: 'div.player_name',
     condition: (element: cheerio.Cheerio<AnyNode>) => {
         // Find the parent sub_child div
@@ -50,8 +50,8 @@ export const PFEIL_FILTER: DomFilter = {
 }
 
 export const FILTER_MAP = {
-    ALTERNATIVES: ALTERNATIVES_FILTER,
-    PFEIL: PFEIL_FILTER,
+    GESETZT: GESETZT_FILTER,
+    STARTELF: STARTELF_FILTER,
 }
 
 export type FilterName = keyof typeof FILTER_MAP
@@ -267,31 +267,46 @@ export class HtmlParser {
             playerNameDivs.each((_, div) => {
                 if (result) return // Skip if already found
 
-                const playerText = $(div).text().trim()
+                const playerDiv = $(div)
 
-                if (playerText.toLowerCase().includes(playerNameLower)) {
-                    // Check if player is in an injury section
-                    const parentSection = $(div).closest('section')
-                    if (
-                        parentSection.length &&
-                        /Verletzt|Angeschlagen|Gesperrt|fehlen/i.test(
-                            parentSection.text()
-                        )
-                    ) {
-                        result = {
-                            isLikelyToPlay: false,
-                            reason: 'Verletzung oder Sperre',
-                            lastChecked: new Date(),
-                        }
-                        return false
-                    }
+                // *** New Check: Ensure player is within the stadium container ***
+                const stadiumContainer = playerDiv.closest(
+                    'div.stadium_container_bg'
+                )
+                if (stadiumContainer.length === 0) {
+                    this.logger.debug(
+                        `Skipping player ${playerDiv.text().trim()} because they are not inside div.stadium_container_bg`
+                    )
+                    return // Skip this player entirely
+                }
+                // *** End New Check ***
 
+                const playerText = playerDiv.text().trim()
+                const playerName = playerText.toLowerCase()
+
+                if (!playerName) return
+
+                // Check if player is in an injury section
+                const parentSection = $(div).closest('section')
+                if (
+                    parentSection.length &&
+                    /Verletzt|Angeschlagen|Gesperrt|fehlen/i.test(
+                        parentSection.text()
+                    )
+                ) {
                     result = {
-                        isLikelyToPlay: true,
+                        isLikelyToPlay: false,
+                        reason: 'Verletzung oder Sperre',
                         lastChecked: new Date(),
                     }
                     return false
                 }
+
+                result = {
+                    isLikelyToPlay: true,
+                    lastChecked: new Date(),
+                }
+                return false
             })
 
             if (result) {
@@ -367,6 +382,19 @@ export class HtmlParser {
             // Process each player
             playerNameDivs.each((_, div) => {
                 const playerDiv = $(div)
+
+                // *** New Check: Ensure player is within the stadium container ***
+                const stadiumContainer = playerDiv.closest(
+                    'div.stadium_container_bg'
+                )
+                if (stadiumContainer.length === 0) {
+                    this.logger.debug(
+                        `Skipping player ${playerDiv.text().trim()} -> Bank gewesen`
+                    )
+                    return // Skip this player entirely
+                }
+                // *** End New Check ***
+
                 const playerText = playerDiv.text().trim()
                 const playerName = playerText.toLowerCase()
 

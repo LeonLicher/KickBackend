@@ -241,5 +241,5 @@ app.listen(port, () => {
             },
             30 * 60 * 1000
         )
-    }, 0) // Wait 20 seconds after startup to avoid initial load
+    }, 5000) // Wait 20 seconds after startup to avoid initial load
 })
