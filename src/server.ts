@@ -161,8 +161,8 @@ apiRouter.post('/analysis/team', async (req, res) => {
 })
 
 // Register the modular routes
-apiRouter.use('/', availabilityRoutes) // Use the availability routes with an /availability prefix
-apiRouter.use('/', cacheRoutes) // Use the cache routes with a /cache prefix
+apiRouter.use('/', availabilityRoutes) //
+apiRouter.use('/', cacheRoutes) //
 
 // Add routers to app
 app.use('/public', publicRouter)
