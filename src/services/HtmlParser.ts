@@ -15,14 +15,14 @@ interface StatusCacheEntry {
 }
 
 export interface DomFilter {
-    type: 'visibility' | string // extensible for future filter types
+    type: 'Alternatives' | 'Pfeil' // extensible for future filter types
     selector: string // CSS selector to find the element
     condition: (element: cheerio.Cheerio<AnyNode>) => boolean // function that returns true if element passes the filter
 }
 
 // Spieler ohne Alternativen
 export const ALTERNATIVES_FILTER: DomFilter = {
-    type: 'visibility',
+    type: 'Alternatives',
     selector: '.sub_child',
     condition: (element: cheerio.Cheerio<AnyNode>) => {
         const displayStyle = element.css('display')
@@ -179,81 +179,43 @@ export class HtmlParser {
         )
 
         this.logger.debug(
-            `Looking up status for player: ${playerName} with filter: ${
-                domFilter?.type ?? 'none'
-            }`
+            `Looking up status for player: ${playerName} with filter: ${domFilter?.type ?? 'none'} (Cache Key: ${cacheKey})`
         )
-        this.logger.debug(`Status cache key: ${cacheKey}`)
 
-        // 1) Second‑level cache lookup
+        // 1) Check the status cache - this is the ONLY source during requests
         const cachedStatus = this.statusCache.get(cacheKey)
+
         if (cachedStatus) {
             const ageMs = now - cachedStatus.timestamp
-            const expiresInMs = this.statusCacheDurationMs - ageMs
 
-            if (ageMs < this.statusCacheDurationMs) {
-                this.logger.info(
-                    `Status cache hit for ${playerName} (filter: ${
-                        domFilter?.type ?? 'none'
-                    }, age: ${Math.round(ageMs / 1000)}s, expires in: ${Math.round(
-                        expiresInMs / 1000
-                    )}s)`
+            // Check if cache entry is expired
+            if (ageMs >= this.statusCacheDurationMs) {
+                // Cache entry exists but is expired - Return stale data as requested
+                this.logger.warning(
+                    `Status cache expired for ${playerName} (filter: ${domFilter?.type ?? 'none'}, age: ${Math.round(ageMs / 1000)}s). Returning stale data.`
                 )
+                // Return the stale information
                 return cachedStatus.info
             } else {
+                // Cache entry exists and is valid
                 this.logger.info(
-                    `Status cache expired for ${playerName} (filter: ${
-                        domFilter?.type ?? 'none'
-                    }, age: ${Math.round(ageMs / 1000)}s, expired ${Math.round(
-                        -expiresInMs / 1000
-                    )}s ago)`
+                    `Status cache hit for ${playerName} (filter: ${domFilter?.type ?? 'none'}, age: ${Math.round(ageMs / 1000)}s)`
                 )
+                return cachedStatus.info
             }
         } else {
-            this.logger.info(
-                `Status cache miss for ${playerName} (filter: ${
-                    domFilter?.type ?? 'none'
-                }, key: ${cacheKey}, current cache size: ${this.statusCache.size})`
+            // Status not found in cache - this indicates a potential issue with preloading or the player simply isn't on the page/doesn't match the filter.
+            // Return the specific "not playing" status as requested.
+            this.logger.warning(
+                // Changed to warning as it might be expected if player doesn't exist for filter
+                `Status cache MISS for ${playerName} (filter: ${domFilter?.type ?? 'none'}, key: ${cacheKey}). Player might not exist, not match filter, or preloading failed.`
             )
+            return {
+                isLikelyToPlay: false,
+                reason: 'Information not pre-cached or player not found for filter',
+                lastChecked: new Date(), // Use current time as we determined the status now
+            }
         }
-
-        // 2) Need to parse (may come from first‑level HTML cache)
-        const htmlStartTime = performance.now()
-        const html = await this.fetchHtml(teamUrl)
-        const htmlEndTime = performance.now()
-
-        if (!html) {
-            this.logger.error(`Failed to fetch HTML content for ${playerName}`)
-            return null
-        }
-
-        this.logger.debug(
-            `fetchHtml took ${(htmlEndTime - htmlStartTime).toFixed(2)}ms for ${playerName}`
-        )
-
-        // Use the new optimized parsing for individual player lookups
-        const startTime = performance.now()
-        const playerStatus = await this.parsePlayerStatus(
-            html,
-            playerName,
-            domFilter
-        )
-        const endTime = performance.now()
-
-        this.logger.debug(
-            `Total parsing took ${(endTime - startTime).toFixed(2)}ms`
-        )
-
-        // Cache the result
-        if (playerStatus) {
-            this.statusCache.set(cacheKey, {
-                info: playerStatus,
-                timestamp: now,
-            })
-            this.logger.debug(`Cached status for ${playerName}`)
-        }
-
-        return playerStatus
     }
 
     /**
@@ -396,30 +358,40 @@ export class HtmlParser {
                 `Found ${playerNameDivs.length} player names in team page`
             )
 
+            // Define all filters to consider, including 'undefined' for the no-filter case
+            const allFiltersToCache: (DomFilter | undefined)[] = [
+                ...domFilters,
+                undefined,
+            ]
+
             // Process each player
             playerNameDivs.each((_, div) => {
-                const playerText = $(div).text().trim()
+                const playerDiv = $(div)
+                const playerText = playerDiv.text().trim()
                 const playerName = playerText.toLowerCase()
 
                 if (!playerName) return
 
-                // For each player, process with each filter type
-                // This allows us to cache all possible filter combinations
-                domFilters.forEach((domFilter) => {
-                    // Skip if filter doesn't match
-                    const parentElement = $(div).closest(domFilter.selector)
-                    if (
-                        parentElement.length > 0 &&
-                        !domFilter.condition(parentElement)
-                    ) {
-                        return
+                // For each player, process with each filter type (including no filter)
+                allFiltersToCache.forEach((currentFilter) => {
+                    // Check if the player div itself meets the filter condition (if a filter is applied)
+                    if (currentFilter) {
+                        const parentElement = playerDiv.closest(
+                            currentFilter.selector
+                        )
+                        if (
+                            parentElement.length === 0 ||
+                            !currentFilter.condition(parentElement)
+                        ) {
+                            // If the player element does not match the filter criteria, skip caching for this filter combination
+                            // We still need to cache the 'no filter' case below.
+                            return
+                        }
                     }
 
-                    // Check player availability
+                    // Check player availability (injured/suspended status)
                     let playerStatus: PlayerAvailabilityInfo
-
-                    // Check if player is in an injury section
-                    const parentSection = $(div).closest('section')
+                    const parentSection = playerDiv.closest('section')
                     if (
                         parentSection.length &&
                         /Verletzt|Angeschlagen|Gesperrt|fehlen/i.test(
@@ -429,31 +401,39 @@ export class HtmlParser {
                         playerStatus = {
                             isLikelyToPlay: false,
                             reason: 'Verletzung oder Sperre',
-                            lastChecked: new Date(),
+                            lastChecked: new Date(now),
                         }
                     } else {
                         playerStatus = {
                             isLikelyToPlay: true,
-                            lastChecked: new Date(),
+                            lastChecked: new Date(now),
                         }
                     }
 
-                    // Store in cache
+                    // Store in cache using the specific filter (or undefined for no filter)
                     const cacheKey = this.buildStatusCacheKey(
                         teamUrl,
                         playerName,
-                        domFilter
+                        currentFilter // Pass the specific filter or undefined
                     )
                     this.statusCache.set(cacheKey, {
                         info: playerStatus,
                         timestamp: now,
                     })
+
+                    // Log the cached status
+                    this.logger.debug(
+                        `Caching status for ${playerName} [${currentFilter?.type ?? 'no filter'}]: ` +
+                            `isLikelyToPlay=${playerStatus.isLikelyToPlay}` +
+                            `${playerStatus.reason ? ', reason=' + playerStatus.reason : ''} (Key: ${cacheKey})`
+                    )
+
                     parsedCount++
                 })
             })
 
             this.logger.info(
-                `Cached ${parsedCount} player statuses from team URL: ${teamUrl}`
+                `Preparsed and cached ${parsedCount} player status entries (incl. filter variations) from team URL: ${teamUrl}`
             )
             return parsedCount
         } catch (error) {
