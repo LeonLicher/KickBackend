@@ -219,6 +219,105 @@ export class HtmlParser {
     }
 
     /**
+     * Checks if a player element is inside the stadium container
+     * @param $ The cheerio instance
+     * @param playerElement The player element to check
+     * @returns true if the player is inside the stadium container, false otherwise
+     */
+    private isPlayerInStadiumContainer(
+        $: cheerio.CheerioAPI,
+        playerElement: cheerio.Cheerio<AnyNode>
+    ): boolean {
+        const stadiumContainer = playerElement.closest(
+            'div.stadium_container_bg'
+        )
+        return stadiumContainer.length > 0
+    }
+
+    /**
+     * Checks if a player element matches the given filter
+     * @param $ The cheerio instance
+     * @param playerElement The player element to check
+     * @param filter The filter to apply
+     * @returns true if the player matches the filter or no filter is provided, false otherwise
+     */
+    private doesPlayerMatchFilter(
+        $: cheerio.CheerioAPI,
+        playerElement: cheerio.Cheerio<AnyNode>,
+        filter?: DomFilter
+    ): boolean {
+        if (!filter) return true
+
+        const parentElement = playerElement.closest(filter.selector)
+        if (parentElement.length === 0) return true
+
+        return filter.condition(parentElement)
+    }
+
+    /**
+     * Checks if a player is injured or suspended based on parent section text
+     * @param $ The cheerio instance
+     * @param playerElement The player element to check
+     * @returns true if player is injured or suspended, false otherwise
+     */
+    private isPlayerInjuredOrSuspended(
+        $: cheerio.CheerioAPI,
+        playerElement: cheerio.Cheerio<AnyNode>
+    ): boolean {
+        const parentSection = playerElement.closest('section')
+        return (
+            parentSection.length > 0 &&
+            /Verletzt|Angeschlagen|Gesperrt|fehlen/i.test(parentSection.text())
+        )
+    }
+
+    /**
+     * Creates a player availability info object
+     * @param isAvailable Whether the player is likely to play
+     * @param reason Optional reason why player is not available
+     * @param timestamp Timestamp to use for lastChecked (defaults to now)
+     * @returns PlayerAvailabilityInfo object
+     */
+    private createPlayerStatus(
+        isAvailable: boolean,
+        reason?: string,
+        timestamp: number = Date.now()
+    ): PlayerAvailabilityInfo {
+        return {
+            isLikelyToPlay: isAvailable,
+            reason: reason,
+            lastChecked: new Date(timestamp),
+        }
+    }
+
+    /**
+     * Adds a player status to the cache
+     * @param teamUrl The team URL
+     * @param playerName The player name
+     * @param status The player status info
+     * @param filter Optional filter applied
+     * @param timestamp Timestamp to use (defaults to now)
+     */
+    private cachePlayerStatus(
+        teamUrl: string,
+        playerName: string,
+        status: PlayerAvailabilityInfo,
+        filter?: DomFilter,
+        timestamp: number = Date.now()
+    ): void {
+        const cacheKey = this.buildStatusCacheKey(teamUrl, playerName, filter)
+        this.statusCache.set(cacheKey, {
+            info: status,
+            timestamp: timestamp,
+        })
+        this.logger.debug(
+            `Caching status for ${playerName} [${filter?.type ?? 'no filter'}]: ` +
+                `isLikelyToPlay=${status.isLikelyToPlay}` +
+                `${status.reason ? ', reason=' + status.reason : ''} (Key: ${cacheKey})`
+        )
+    }
+
+    /**
      * Parse HTML to check player availability
      */
     public async parsePlayerStatus(
@@ -240,22 +339,23 @@ export class HtmlParser {
                 this.logger.warning(
                     `Player ${playerName} not found in HTML content (quick check)`
                 )
-                return {
-                    isLikelyToPlay: false,
-                    reason: 'Nicht im Kader',
-                    lastChecked: new Date(),
-                }
+                return this.createPlayerStatus(false, 'Nicht im Kader')
             }
 
             // Load the HTML into cheerio
             const $ = cheerio.load(html)
 
             // Find player_name divs that match our filter
-            const playerNameDivs = $('div.player_name').filter(function () {
-                if (!domFilter) return true
-                const parentElement = $(this).closest(domFilter.selector)
-                if (parentElement.length === 0) return true
-                return domFilter.condition(parentElement)
+            const playerNameDivs = $('div.player_name').filter((_, elem) => {
+                const playerDiv = $(elem)
+
+                // Check if player is in stadium container
+                if (!this.isPlayerInStadiumContainer($, playerDiv)) {
+                    return false
+                }
+
+                // Apply filter if provided
+                return this.doesPlayerMatchFilter($, playerDiv, domFilter)
             })
 
             this.logger.info(
@@ -268,44 +368,21 @@ export class HtmlParser {
                 if (result) return // Skip if already found
 
                 const playerDiv = $(div)
-
-                // *** New Check: Ensure player is within the stadium container ***
-                const stadiumContainer = playerDiv.closest(
-                    'div.stadium_container_bg'
-                )
-                if (stadiumContainer.length === 0) {
-                    this.logger.debug(
-                        `Skipping player ${playerDiv.text().trim()} because they are not inside div.stadium_container_bg`
-                    )
-                    return // Skip this player entirely
-                }
-                // *** End New Check ***
-
                 const playerText = playerDiv.text().trim()
                 const playerName = playerText.toLowerCase()
 
                 if (!playerName) return
 
-                // Check if player is in an injury section
-                const parentSection = $(div).closest('section')
-                if (
-                    parentSection.length &&
-                    /Verletzt|Angeschlagen|Gesperrt|fehlen/i.test(
-                        parentSection.text()
+                // Check if player is injured or suspended
+                if (this.isPlayerInjuredOrSuspended($, playerDiv)) {
+                    result = this.createPlayerStatus(
+                        false,
+                        'Verletzung oder Sperre'
                     )
-                ) {
-                    result = {
-                        isLikelyToPlay: false,
-                        reason: 'Verletzung oder Sperre',
-                        lastChecked: new Date(),
-                    }
                     return false
                 }
 
-                result = {
-                    isLikelyToPlay: true,
-                    lastChecked: new Date(),
-                }
+                result = this.createPlayerStatus(true)
                 return false
             })
 
@@ -321,22 +398,14 @@ export class HtmlParser {
             this.logger.warning(
                 `Player ${playerName} not found in HTML content`
             )
-            return {
-                isLikelyToPlay: false,
-                reason: 'Nicht im Kader',
-                lastChecked: new Date(),
-            }
+            return this.createPlayerStatus(false, 'Nicht im Kader')
         } catch (error) {
             const errorMessage =
                 error instanceof Error ? error.message : String(error)
             this.logger.error(`Error parsing player status: ${errorMessage}`)
 
             // Return a default response even on error
-            return {
-                isLikelyToPlay: false,
-                reason: `Error: ${errorMessage}`,
-                lastChecked: new Date(),
-            }
+            return this.createPlayerStatus(false, `Error: ${errorMessage}`)
         }
     }
 
@@ -383,17 +452,13 @@ export class HtmlParser {
             playerNameDivs.each((_, div) => {
                 const playerDiv = $(div)
 
-                // *** New Check: Ensure player is within the stadium container ***
-                const stadiumContainer = playerDiv.closest(
-                    'div.stadium_container_bg'
-                )
-                if (stadiumContainer.length === 0) {
+                // Skip players not in the stadium container
+                if (!this.isPlayerInStadiumContainer($, playerDiv)) {
                     this.logger.debug(
                         `Skipping player ${playerDiv.text().trim()} -> Bank gewesen`
                     )
                     return // Skip this player entirely
                 }
-                // *** End New Check ***
 
                 const playerText = playerDiv.text().trim()
                 const playerName = playerText.toLowerCase()
@@ -403,59 +468,38 @@ export class HtmlParser {
                 // For each player, process with each filter type (including no filter)
                 allFiltersToCache.forEach((currentFilter) => {
                     // Check if the player div itself meets the filter condition (if a filter is applied)
-                    if (currentFilter) {
-                        const parentElement = playerDiv.closest(
-                            currentFilter.selector
-                        )
-                        if (
-                            parentElement.length === 0 ||
-                            !currentFilter.condition(parentElement)
-                        ) {
-                            // If the player element does not match the filter criteria, skip caching for this filter combination
-                            // We still need to cache the 'no filter' case below.
-                            return
-                        }
-                    }
-
-                    // Check player availability (injured/suspended status)
-                    let playerStatus: PlayerAvailabilityInfo
-                    const parentSection = playerDiv.closest('section')
                     if (
-                        parentSection.length &&
-                        /Verletzt|Angeschlagen|Gesperrt|fehlen/i.test(
-                            parentSection.text()
-                        )
+                        currentFilter &&
+                        !this.doesPlayerMatchFilter($, playerDiv, currentFilter)
                     ) {
-                        playerStatus = {
-                            isLikelyToPlay: false,
-                            reason: 'Verletzung oder Sperre',
-                            lastChecked: new Date(now),
-                        }
-                    } else {
-                        playerStatus = {
-                            isLikelyToPlay: true,
-                            lastChecked: new Date(now),
-                        }
+                        // If the player element does not match the filter criteria, skip caching for this filter combination
+                        return
                     }
 
-                    // Store in cache using the specific filter (or undefined for no filter)
-                    const cacheKey = this.buildStatusCacheKey(
+                    // Determine player status based on injury/suspension
+                    let playerStatus: PlayerAvailabilityInfo
+                    if (this.isPlayerInjuredOrSuspended($, playerDiv)) {
+                        playerStatus = this.createPlayerStatus(
+                            false,
+                            'Verletzung oder Sperre',
+                            now
+                        )
+                    } else {
+                        playerStatus = this.createPlayerStatus(
+                            true,
+                            undefined,
+                            now
+                        )
+                    }
+
+                    // Cache player status
+                    this.cachePlayerStatus(
                         teamUrl,
                         playerName,
-                        currentFilter // Pass the specific filter or undefined
+                        playerStatus,
+                        currentFilter,
+                        now
                     )
-                    this.statusCache.set(cacheKey, {
-                        info: playerStatus,
-                        timestamp: now,
-                    })
-
-                    // Log the cached status
-                    this.logger.debug(
-                        `Caching status for ${playerName} [${currentFilter?.type ?? 'no filter'}]: ` +
-                            `isLikelyToPlay=${playerStatus.isLikelyToPlay}` +
-                            `${playerStatus.reason ? ', reason=' + playerStatus.reason : ''} (Key: ${cacheKey})`
-                    )
-
                     parsedCount++
                 })
             })
