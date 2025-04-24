@@ -2,7 +2,7 @@ import express from 'express'
 import logger from '../model/logger'
 import { Player } from '../model/player'
 import { globalHtmlParser } from '../server'
-import { FILTER_MAP, FilterName } from '../services/HtmlParser'
+import { FILTER_MAP, FilterName } from '../services/html/types'
 import teamMapping from '../utils/teamMapping'
 
 const router = express.Router()

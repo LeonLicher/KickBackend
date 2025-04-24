@@ -9,7 +9,7 @@ import {
     findAlternativePlayers,
 } from './model/categorizePlayers'
 import logger from './model/logger'
-import { HtmlParser } from './services/HtmlParser'
+import { HtmlParser } from './services/html'
 import { logAuth } from './services/firebase'
 import { AuthLog } from './types/AuthLogs'
 import { DetailedPlayersResponse } from './types/DetailedPlayers'
